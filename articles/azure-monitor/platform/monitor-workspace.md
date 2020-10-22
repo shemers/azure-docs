@@ -78,8 +78,8 @@ Use the process in [Create, view, and manage log alerts using Azure Monitor](../
 
 | Query | Threshold value | Period | Frequency |
 |:---|:---|:---|:---|
-| `_LogsOperation | where Level == "Error"`   | 0 | 5 | 5 |
-| `_LogsOperation | where Level == "Warning"` | 0 | 1440 | 1440 |
+| `_LogOperation | where Level == "Error"`   | 0 | 5 | 5 |
+| `_LogOperation | where Level == "Warning"` | 0 | 1440 | 1440 |
 
 These alert rules will respond the same to all operations with Error or Warning. As you become more familiar with the operations that are generating alerts, you may want to respond differently for particular operations. For example, you may want to send notifications to different people for particular operations. 
 
