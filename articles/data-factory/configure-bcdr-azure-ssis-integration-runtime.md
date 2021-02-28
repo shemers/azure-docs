@@ -1,6 +1,6 @@
 ---
-title: Configure Azure-SSIS Integration Runtime for SQL Database failover
-description: This article describes how to configure the Azure-SSIS Integration Runtime with Azure SQL Database geo-replication and failover for the SSISDB database
+title: Configure Azure-SSIS integration runtime for business continuity and disaster recovery (BCDR)
+description: This article describes how to configure Azure-SSIS integration runtime in Azure Data Factory with Azure SQL Database/Managed Instance failover group for business continuity and disaster recovery (BCDR). 
 services: data-factory
 ms.service: data-factory
 ms.workload: data-services
@@ -11,251 +11,116 @@ manager: mflasko
 ms.reviewer: douglasl
 ms.topic: conceptual
 ms.custom: seo-lt-2019
-ms.date: 04/09/2020
+ms.date: 02/22/2021
 ---
 
-# Configure the Azure-SSIS Integration Runtime with Azure SQL Database geo-replication and failover
+# Configure Azure-SSIS integration runtime for business continuity and disaster recovery (BCDR) 
 
 [!INCLUDE[appliesto-adf-asa-md](includes/appliesto-adf-xxx-md.md)]
 
-This article describes how to configure the Azure-SSIS Integration Runtime with Azure SQL Database geo-replication for the SSISDB database. When a failover occurs, you can ensure that the Azure-SSIS IR keeps working with the secondary database.
+Azure SQL Database/Managed Instance and SQL Server Integration Services (SSIS) in Azure Data Factory (ADF) can be combined as the recommended all-Platform as a Service (PaaS) solution for SQL Server migration. You can deploy your SSIS projects into SSIS catalog database (SSISDB) hosted by Azure SQL Database/Managed Instance and run your SSIS packages on Azure SSIS integration runtime (IR) in ADF.
 
-For more info about geo-replication and failover for SQL Database, see [Overview: Active geo-replication and auto-failover groups](../sql-database/sql-database-geo-replication-overview.md).
+For business continuity and disaster recovery (BCDR), Azure SQL Database/Managed Instance can be configured with a [geo-replication/failover group](https://docs.microsoft.com/azure/azure-sql/database/auto-failover-group-overview), where SSISDB in a primary Azure region with read-write access (primary role) will be continuously replicated to a secondary region with read-only access (secondary role). When a disaster occurs in the primary region, a failover will be triggered, where the primary and secondary SSISDBs will swap roles.
+
+For BCDR, you can also configure a dual standby Azure SSIS IR pair that works in sync with Azure SQL Database/Managed Instance failover group. This allows you to have a pair of running Azure-SSIS IRs that at any given time, only one can access the primary SSISDB to fetch and execute packages, as well as write package execution logs (primary role), while the other can only do the same for packages deployed somewhere else, for example in Azure Files (secondary role). When SSISDB failover occurs, the primary and secondary Azure-SSIS IRs will also swap roles and if both are running, there'll be a near-zero downtime.
+
+This article describes how to configure Azure-SSIS IR with Azure SQL Database/Managed Instance failover group for BCDR.
 
 [!INCLUDE [updated-for-az](../../includes/updated-for-az.md)]
 
-## Azure-SSIS IR failover with Azure SQL Database Managed Instance
+## Configure a dual standby Azure-SSIS IR pair with Azure SQL Database failover group
 
-### Prerequisites
+To configure a dual standby Azure-SSIS IR pair that works in sync with Azure SQL Database failover group, complete the following steps.
 
-Azure SQL Database Managed Instance uses **database master key (DMK)** to help secure data, credentials, and connection information that is stored in database. To enable the automatic decryption of DMK, a copy of the key is encrypted by using the **server master key (SMK)**. But SMK is not replicated in failover group, so you need to add an additional password on both primary and secondary instances for DMK decryption after failover.
+1. Using Azure portal/ADF UI, you can create a new Azure-SSIS IR with your primary Azure SQL Database server to host SSISDB in the primary region. If you have an existing Azure-SSIS IR that's already attached to SSIDB hosted by your primary Azure SQL Database server and it's still running, you need to stop it first to reconfigure it. This will be your primary Azure-SSIS IR. When [selecting to use SSISDB](./tutorial-deploy-ssis-packages-azure.md#creating-ssisdb) on the **Deployment settings** page of **Integration runtime setup** pane, select also the **Use dual standby Azure-SSIS Integration Runtime pair with SSISDB failover** check box. For **Dual standby pair name**, enter a name to identify your pair of primary and secondary Azure-SSIS IRs. When you complete the creation of your primary Azure-SSIS IR, it will be started and attached to a primary SSISDB that will be created on your behalf with read-write access. If you've just reconfigured it, you need to restart it.
 
-1. Execute below command on the SSISDB on primary instance. This step is adding a new encryption password.
+1. Using Azure portal, you can check whether the primary SSISDB has been created on the **Overview** page of your primary Azure SQL Database server. Once it's created, you can [create a failover group for your primary and secondary Azure SQL Database servers and add SSISDB to it](https://docs.microsoft.com/azure/azure-sql/database/failover-group-add-single-database-tutorial?tabs=azure-portal#2---create-the-failover-group) on the **Failover groups** page. Once your failover group is created, you can check whether the primary SSISDB has been replicated to a secondary one with read-only access on the **Overview** page of your secondary Azure SQL Database server.
 
-    ```sql
-    ALTER MASTER KEY ADD ENCRYPTION BY PASSWORD = 'password'
-    ```
+1. Using Azure portal/ADF UI, you can create another Azure-SSIS IR with your secondary Azure SQL Database server to host SSISDB in the secondary region. This will be your secondary Azure-SSIS IR. For complete BCDR, make sure that all resources it depends on are also created in the secondary region, for example Azure Storage for storing custom setup script/files, ADF for orchestration/scheduling package executions, etc. When [selecting to use SSISDB](./tutorial-deploy-ssis-packages-azure.md#creating-ssisdb) on the **Deployment settings** page of **Integration runtime setup** pane, select also the **Use dual standby Azure-SSIS Integration Runtime pair with SSISDB failover** check box. For **Dual standby pair name**, enter the same name to identify your pair of primary and secondary Azure-SSIS IRs. When you complete the creation of your secondary Azure-SSIS IR, it will be started and attached to the secondary SSISDB.
 
-2. Create failover group on Azure SQL Database Managed Instance.
+1. If you want to have a near-zero downtime when SSISDB failover occurs, keep both of your Azure-SSIS IRs running. Only your primary Azure-SSIS IR can access the primary SSISDB to fetch and execute packages, as well as write package execution logs, while your secondary Azure-SSIS IR can only do the same for packages deployed somewhere else, for example in Azure Files. If you want to minimize your running cost, you can stop your secondary Azure-SSIS IR after it's created. When SSISDB failover occurs, your primary and secondary Azure-SSIS IRs will swap roles. If your primary Azure-SSIS IR is stopped, you need to restart it. Depending on whether it's injected into a virtual network and the injection method used, it will take within 5 minutes or around 20 - 30 minutes for it to run.
 
-3. Run **sp_control_dbmasterkey_password** on the secondary instance, using the new encryption password.
+1. If you [use ADF for orchestration/scheduling package executions](./how-to-invoke-ssis-package-ssis-activity.md), make sure that all relevant ADF pipelines with Execute SSIS Package activities and associated triggers are copied to your secondary ADF with the triggers initially disabled. When SSISDB failover occurs, you need to enable them.
 
-    ```sql
-    EXEC sp_control_dbmasterkey_password @db_name = N'SSISDB',   
-        @password = N'<password>', @action = N'add';  
-    GO
-    ```
+1. You can [test your Azure SQL Database failover group](https://docs.microsoft.com/azure/azure-sql/database/failover-group-add-single-database-tutorial?tabs=azure-portal#3---test-failover) and check on [Azure-SSIS IR monitoring page in ADF portal](./monitor-integration-runtime.md#monitor-the-azure-ssis-integration-runtime-in-azure-portal) whether your primary and secondary Azure-SSIS IRs have swapped roles. 
 
-### Scenario 1 - Azure-SSIS IR is pointing to read-write listener endpoint
+## Configure a dual standby Azure-SSIS IR pair with Azure SQL Managed Instance failover group
 
-If you want Azure-SSIS IR point to read-write listener endpoint, you need to point to primary server endpoint first. After putting SSISDB to failover group, you can change to read-write listener endpoint and restart Azure-SSIS IR.
+To configure a dual standby Azure-SSIS IR pair that works in sync with Azure SQL Managed Instance failover group, complete the following steps.
 
-#### Solution
+1. Using Azure portal, you can [create a failover group for your primary and secondary Azure SQL Managed Instances](https://docs.microsoft.com/azure/azure-sql/managed-instance/failover-group-add-instance-tutorial?tabs=azure-portal) on the **Failover groups** page of your primary Azure SQL Managed Instance.
 
-When failover occurs, you have to do the following things:
+1. Using Azure portal/ADF UI, you can create a new Azure-SSIS IR with your primary Azure SQL Managed Instance to host SSISDB in the primary region. If you have an existing Azure-SSIS IR that's already attached to SSIDB hosted by your primary Azure SQL Managed Instance and it's still running, you need to stop it first to reconfigure it. This will be your primary Azure-SSIS IR. When [selecting to use SSISDB](./create-azure-ssis-integration-runtime.md#creating-ssisdb) on the **Deployment settings** page of **Integration runtime setup** pane, select also the **Use dual standby Azure-SSIS Integration Runtime pair with SSISDB failover** check box. For **Dual standby pair name**, enter a name to identify your pair of primary and secondary Azure-SSIS IRs. When you complete the creation of your primary Azure-SSIS IR, it will be started and attached to a primary SSISDB that will be created on your behalf with read-write access. If you've just reconfigured it, you need to restart it. You can also check whether the primary SSISDB has been replicated to a secondary one with read-only access on the **Overview** page of your secondary Azure SQL Managed Instance.
 
-1. Stop Azure-SSIS IR on primary region.
+1. Using Azure portal/ADF UI, you can create another Azure-SSIS IR with your secondary Azure SQL Managed Instance to host SSISDB in the secondary region. This will be your secondary Azure-SSIS IR. For complete BCDR, make sure that all resources it depends on are also created in the secondary region, for example Azure Storage for storing custom setup script/files, ADF for orchestration/scheduling package executions, etc. When [selecting to use SSISDB](./create-azure-ssis-integration-runtime.md#creating-ssisdb) on the **Deployment settings** page of **Integration runtime setup** pane, select also the **Use dual standby Azure-SSIS Integration Runtime pair with SSISDB failover** check box. For **Dual standby pair name**, enter the same name to identify your pair of primary and secondary Azure-SSIS IRs. When you complete the creation of your secondary Azure-SSIS IR, it will be started and attached to the secondary SSISDB.
 
-2. Edit Azure-SSIS IR with new region, VNET and custom setup SAS URI information of secondary instance. As Azure-SSIS IR is pointing to read-write listener and the endpoint is transparent to Azure-SSIS IR, you don't need to edit the endpoint.
+1. Azure SQL Managed Instance can secure sensitive data in databases, such as SSISDB, by encrypting them using Database Master Key (DMK). DMK itself is in turn encrypted using Service Master Key (SMK) by default. At the time of writing, Azure SQL Managed Instance failover group doesn't replicate SMK from the primary Azure SQL Managed Instance, so DMK and in turn SSISDB can't be decrypted on the secondary Azure SQL Managed Instance after failover occurs. To work around this, you can add a password encryption for DMK to be decrypted on the secondary Azure SQL Managed Instance. Using SSMS, complete the following steps.
 
-    ```powershell
-    Set-AzDataFactoryV2IntegrationRuntime -Location "new region" `
-                -VNetId "new VNet" `
-                -Subnet "new subnet" `
-                -SetupScriptContainerSasUri "new custom setup SAS URI"
-    ```
+   1. Run the following command for SSISDB in your primary Azure SQL Managed Instance to add a password for encrypting DMK.
 
-3. Restart Azure-SSIS IR.
-
-### Scenario 2 - Azure-SSIS IR is pointing to primary server endpoint
-
-The scenario is suitable if Azure-SSIS IR is pointing to primary server endpoint.
-
-#### Solution
-
-When failover occurs, you have to do the following things:
-
-1. Stop Azure-SSIS IR on primary region.
-
-2. Edit Azure-SSIS IR with new region, endpoint and VNET information of secondary instance.
-
-    ```powershell
-    Set-AzDataFactoryV2IntegrationRuntime -Location "new region" `
-                -CatalogServerEndpoint "Azure SQL Database server endpoint" `
-                -CatalogAdminCredential "Azure SQL Database server admin credentials" `
-                -VNetId "new VNet" `
-                -Subnet "new subnet" `
-                -SetupScriptContainerSasUri "new custom setup SAS URI"
-    ```
-
-3. Restart Azure-SSIS IR.
-
-### Scenario 3 - Azure-SSIS IR is pointing to public endpoint of Azure SQL Database Managed Instance
-
-The scenario is suitable if the Azure-SSIS IR is pointing to public endpoint of Azure SQL Database Managed Instance and it doesn't join to VNET. The only difference between scenario 2 and this scenarios is that you don't need to edit VNET information of Azure-SSIS IR after failover.
-
-#### Solution
-
-When failover occurs, you have to do the following things:
-
-1. Stop Azure-SSIS IR on primary region.
-
-2. Edit Azure-SSIS IR with new region and endpoint information of secondary instance.
-
-    ```powershell
-    Set-AzDataFactoryV2IntegrationRuntime -Location "new region" `
-                -CatalogServerEndpoint "Azure SQL Database server endpoint" `
-                -CatalogAdminCredential "Azure SQL Database server admin credentials" `
-                -SetupScriptContainerSasUri "new custom setup SAS URI"
-    ```
-
-3. Restart Azure-SSIS IR.
-
-### Scenario 4 - Attaching an existing SSISDB (SSIS catalog) to a new Azure-SSIS IR
-
-This scenario is suitable if you want to provision a new Azure-SSIS IR on secondary region or you want your SSISDB to keep working with a new Azure-SSIS IR in a new region when an ADF or Azure-SSIS IR disaster occurs in current region.
-
-#### Solution
-
-When failover occurs, you have to do the following things:
-
-> [!NOTE]
-> Step 4 (creation of IR) needs to be done via PowerShell. Azure portal will report an error stating that SSISDB already exists.
-
-1. Stop Azure-SSIS IR on primary region.
-
-2. Execute stored procedure to update metadata in SSISDB to accept connections from **\<new_data_factory_name\>** and **\<new_integration_runtime_name\>**.
+      ```sql
+      ALTER MASTER KEY ADD ENCRYPTION BY PASSWORD = 'YourPassword'
+      ```
    
-    ```sql
-    EXEC [catalog].[failover_integration_runtime] @data_factory_name='<new_data_factory_name>', @integration_runtime_name='<new_integration_runtime_name>'
-    ```
+   1. Run the following command for SSISDB in both your primary and secondary Azure SQL Managed Instances to add the new password for decrypting DMK.
 
-3. Create a new data factory named **\<new_data_factory_name\>** in the new region. For more info, see Create a data factory.
+      ```sql
+      EXEC sp_control_dbmasterkey_password @db_name = N'SSISDB', @password = N'YourPassword', @action = N'add'
+      ```
 
-    ```powershell
-    Set-AzDataFactoryV2 -ResourceGroupName "new resource group name" `
-                      -Location "new region"`
-                      -Name "<new_data_factory_name>"
-    ```
-    
-    For more info about this PowerShell command, see [Create an Azure data factory using PowerShell](quickstart-create-data-factory-powershell.md)
+1. If you want to have a near-zero downtime when SSISDB failover occurs, keep both of your Azure-SSIS IRs running. Only your primary Azure-SSIS IR can access the primary SSISDB to fetch and execute packages, as well as write package execution logs, while your secondary Azure-SSIS IR can only do the same for packages deployed somewhere else, for example in Azure Files. If you want to minimize your running cost, you can stop your secondary Azure-SSIS IR after it's created. When SSISDB failover occurs, your primary and secondary Azure-SSIS IRs will swap roles. If your primary Azure-SSIS IR is stopped, you need to restart it. Depending on whether it's injected into a virtual network and the injection method used, it will take within 5 minutes or around 20 - 30 minutes for it to run.
 
-4. Create a new Azure-SSIS IR named **\<new_integration_runtime_name\>** in the new region using Azure PowerShell.
+1. If you [use Azure SQL Managed Instance Agent for orchestration/scheduling package executions](./how-to-invoke-ssis-package-managed-instance-agent.md), make sure that all relevant SSIS jobs with their job steps and associated schedules are copied to your secondary Azure SQL Managed Instance with the schedules initially disabled. Using SSMS, complete the following steps.
 
-    ```powershell
-    Set-AzDataFactoryV2IntegrationRuntime -ResourceGroupName "new resource group name" `
-                                           -DataFactoryName "new data factory name" `
-                                           -Name "<new_integration_runtime_name>" `
-                                           -Description $AzureSSISDescription `
-                                           -Type Managed `
-                                           -Location $AzureSSISLocation `
-                                           -NodeSize $AzureSSISNodeSize `
-                                           -NodeCount $AzureSSISNodeNumber `
-                                           -Edition $AzureSSISEdition `
-                                           -LicenseType $AzureSSISLicenseType `
-                                           -MaxParallelExecutionsPerNode $AzureSSISMaxParallelExecutionsPerNode `
-                                           -VnetId "new vnet" `
-                                           -Subnet "new subnet" `
-                                           -CatalogServerEndpoint $SSISDBServerEndpoint `
-                                           -CatalogPricingTier $SSISDBPricingTier
-    ```
+   1. For each SSIS job, right-click and select the **Script Job as**, **CREATE To**, and **New Query Editor Window** dropdown menu items to generate its script.
 
-    For more info about this PowerShell command, see [Create the Azure-SSIS integration runtime in Azure Data Factory](create-azure-ssis-integration-runtime.md)
+      ![Generate SSIS job script](media/configure-bcdr-azure-ssis-integration-runtime/generate-ssis-job-script.png)
 
+   1. For each generated SSIS job script, find the command to execute `sp_add_job` stored procedure and modify/remove the value assignment to `@owner_login_name` argument as necessary.
 
+   1. For each updated SSIS job script, run it on your secondary Azure SQL Managed Instance to copy the job with its job steps and associated schedules.
 
-## Azure-SSIS IR failover with Azure SQL Database
+   1. Create a new T-SQL job to enable/disable SSIS job schedules based on the primary/secondary SSISDB role, respectively, in both your primary and secondary Azure SQL Managed Instance and run it regularly. When SSISDB failover occurs, SSIS job schedules that were disabled will be enabled and vice versa.
 
-### Scenario 1 - Azure-SSIS IR is pointing to read-write listener endpoint
+      ```sql
+      IF (SELECT Top 1 role_desc FROM SSISDB.sys.dm_geo_replication_link_status WHERE partner_database = 'SSISDB') = 'PRIMARY'
+         BEGIN
+            IF (SELECT enabled FROM msdb.dbo.sysschedules WHERE schedule_id = <ScheduleID>) = 0
+	           EXEC msdb.dbo.sp_update_schedule @schedule_id = <ScheduleID >, @enabled = 1
+         END
+      ELSE
+         BEGIN
+            IF (SELECT enabled FROM msdb.dbo.sysschedules WHERE schedule_id = <ScheduleID>) = 1
+    	       EXEC msdb.dbo.sp_update_schedule @schedule_id = <ScheduleID >, @enabled = 0
+         END
+      ```
 
-This scenario is suitable Azure-SSIS IR is pointing to the read-write listener endpoint of the failover group and the SQL Database server is *not* configured with the virtual network service endpoint rule. 
-If you want Azure-SSIS IR point to read-write listener endpoint, you need to point to primary server endpoint first. After putting SSISDB to failover group, you can change to read-write listener endpoint and restart Azure-SSIS IR.
+1. If you [use ADF for orchestration/scheduling package executions](./how-to-invoke-ssis-package-ssis-activity.md), make sure that all relevant ADF pipelines with Execute SSIS Package activities and associated triggers are copied to your secondary ADF with the triggers initially disabled. When SSISDB failover occurs, you need to enable them.
 
-#### Solution
+1. You can [test your Azure SQL Managed Instance failover group](https://docs.microsoft.com/azure/azure-sql/managed-instance/failover-group-add-instance-tutorial?tabs=azure-portal#test-failover) and check on [Azure-SSIS IR monitoring page in ADF portal](./monitor-integration-runtime.md#monitor-the-azure-ssis-integration-runtime-in-azure-portal) whether your primary and secondary Azure-SSIS IRs have swapped roles. 
 
-When failover occurs, it is transparent to the Azure-SSIS IR. The Azure-SSIS IR automatically connects to the new primary of the failover group. 
-If you want to update the region or other information in Azure-SSIS IR, you can stop it, edit and restart.
+## Attach a new Azure-SSIS IR to existing SSISDB hosted by Azure SQL Database/Managed Instance
 
+If a disaster occurs and impacts your existing Azure-SSIS IR but not Azure SQL Database/Managed Instance in the same region, you can replace it with a new one in another region. To attach your existing SSISDB hosted by Azure SQL Database/Managed Instance to a new Azure-SSIS IR, complete the following steps.
 
-### Scenario 2 - Azure-SSIS IR is pointing to primary server endpoint
+1. If your existing Azure-SSIS IR is still running, you need to stop it first using Azure portal/ADF UI or Azure PowerShell. If the disaster also impacts ADF in the same region, you can skip this step.
 
-The scenario is suitable if Azure-SSIS IR is pointing to primary server endpoint.
+1. Using SSMS, run the following command for SSISDB in your Azure SQL Database/Managed Instance to update the metadata that will allow connections from your new ADF/Azure-SSIS IR.
 
-#### Solution
+   ```sql
+   EXEC [catalog].[failover_integration_runtime] @data_factory_name = 'YourNewADF', @integration_runtime_name = 'YourNewAzureSSISIR'
+   ```
 
-When failover occurs, you have to do the following things:
-
-1. Stop Azure-SSIS IR on primary region.
-
-2. Edit Azure-SSIS IR with new region, endpoint, and VNET information of secondary instance.
-
-    ```powershell
-    Set-AzDataFactoryV2IntegrationRuntime -Location "new region" `
-                    -CatalogServerEndpoint "Azure SQL Database server endpoint" `
-                    -CatalogAdminCredential "Azure SQL Database server admin credentials" `
-                    -VNetId "new VNet" `
-                    -Subnet "new subnet" `
-                    -SetupScriptContainerSasUri "new custom setup SAS URI"
-    ```
-
-3. Restart Azure-SSIS IR.
-
-### Scenario 3 - Attaching an existing SSISDB (SSIS catalog) to a new Azure-SSIS IR
-
-This scenario is suitable if you want to provision a new Azure-SSIS IR on secondary region or you want your SSISDB to keep working with a new Azure-SSIS IR in a new region when an ADF or Azure-SSIS IR disaster occurs in current region.
-
-#### Solution
-
-> [!NOTE]
-> Step 4 (creation of IR) needs to be done via PowerShell. Azure portal will report an error stating that SSISDB already exists.
-
-1. Stop Azure-SSIS IR on primary region.
-
-2. Execute stored procedure to update metadata in SSISDB to accept connections from **\<new_data_factory_name\>** and **\<new_integration_runtime_name\>**.
-   
-    ```sql
-    EXEC [catalog].[failover_integration_runtime] @data_factory_name='<new_data_factory_name>', @integration_runtime_name='<new_integration_runtime_name>'
-    ```
-
-3. Create a new data factory named **\<new_data_factory_name\>** in the new region. For more info, see Create a data factory.
-
-    ```powershell
-    Set-AzDataFactoryV2 -ResourceGroupName "new resource group name" `
-                         -Location "new region"`
-                         -Name "<new_data_factory_name>"
-    ```
-    
-    For more info about this PowerShell command, see [Create an Azure data factory using PowerShell](quickstart-create-data-factory-powershell.md)
-
-4. Create a new Azure-SSIS IR named **\<new_integration_runtime_name\>** in the new region using Azure PowerShell.
-
-    ```powershell
-    Set-AzDataFactoryV2IntegrationRuntime -ResourceGroupName "new resource group name" `
-                                           -DataFactoryName "new data factory name" `
-                                           -Name "<new_integration_runtime_name>" `
-                                           -Description $AzureSSISDescription `
-                                           -Type Managed `
-                                           -Location $AzureSSISLocation `
-                                           -NodeSize $AzureSSISNodeSize `
-                                           -NodeCount $AzureSSISNodeNumber `
-                                           -Edition $AzureSSISEdition `
-                                           -LicenseType $AzureSSISLicenseType `
-                                           -MaxParallelExecutionsPerNode $AzureSSISMaxParallelExecutionsPerNode `
-                                           -VnetId "new vnet" `
-                                           -Subnet "new subnet" `
-                                           -CatalogServerEndpoint $SSISDBServerEndpoint `
-                                           -CatalogPricingTier $SSISDBPricingTier
-    ```
-
-    For more info about this PowerShell command, see [Create the Azure-SSIS integration runtime in Azure Data Factory](create-azure-ssis-integration-runtime.md)
-
+1. Using [Azure portal/ADF UI](./create-azure-ssis-integration-runtime.md#use-the-azure-portal-to-create-an-integration-runtime) or [Azure PowerShell](./create-azure-ssis-integration-runtime.md#use-azure-powershell-to-create-an-integration-runtime), create your new ADF/Azure-SSIS IR named *YourNewADF*/*YourNewAzureSSISIR*, respectively, in another region. If you use Azure portal/ADF UI, you can ignore the test connection error on **Deployment settings** page of **Integration runtime setup** pane.
 
 ## Next steps
 
-Consider these other configuration options for the Azure-SSIS IR:
+You can consider these other configuration options for your Azure-SSIS IR:
 
-- [Configure the Azure-SSIS Integration Runtime for high performance](configure-azure-ssis-integration-runtime-performance.md)
+- [Configure package stores for your Azure-SSIS IR](./create-azure-ssis-integration-runtime.md#creating-azure-ssis-ir-package-stores)
 
-- [Customize setup for the Azure-SSIS integration runtime](how-to-configure-azure-ssis-ir-custom-setup.md)
+- [Configure custom setups for your Azure-SSIS IR](./how-to-configure-azure-ssis-ir-custom-setup.md)
 
-- [Provision Enterprise Edition for the Azure-SSIS Integration Runtime](how-to-configure-azure-ssis-ir-enterprise-edition.md)
+- [Configure virtual network injection for your Azure-SSIS IR](./join-azure-ssis-integration-runtime-virtual-network.md)
+
+- [Configure self-hosted IR as a proxy for your Azure-SSIS IR](./self-hosted-integration-runtime-proxy-ssis.md)

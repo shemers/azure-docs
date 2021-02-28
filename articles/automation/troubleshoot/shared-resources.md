@@ -1,20 +1,15 @@
 ---
-title: Troubleshoot shared resources in Azure Automation
-description: Learn how to troubleshoot and resolve issues with Azure Automation shared resources. 
+title: Troubleshoot Azure Automation shared resource issues
+description: This article tells how to troubleshoot and resolve issues with Azure Automation shared resources.
 services: automation
-author: mgoedtel
-ms.author: magoedte
-ms.date: 03/12/2019
-ms.topic: conceptual
-ms.service: automation
-manager: carmonm
+ms.subservice:
+ms.date: 01/27/2021
+ms.topic: troubleshooting
 ---
-# Troubleshoot shared resources in Azure Automation
 
-This article discusses solutions for problems you might have when you're using [shared resources](../automation-intro.md#shared-resources) in Azure Automation.
+# Troubleshoot shared resource issues
 
->[!NOTE]
->This article has been updated to use the new Azure PowerShell Az module. You can still use the AzureRM module at the present time. To learn more about the new Az module and AzureRM compatibility, see [Introducing the new Azure PowerShell Az module](https://docs.microsoft.com/powershell/azure/new-azureps-module-az?view=azps-3.5.0). For Az module installation instructions on your Hybrid Runbook Worker, see [Install the Azure PowerShell Module](https://docs.microsoft.com/powershell/azure/install-az-ps?view=azps-3.5.0). For your Automation account, you can update your modules to the latest version by using [How to update Azure PowerShell modules in Azure Automation](../automation-update-azure-modules.md).
+This article discusses issues that might arise when you're using [shared resources](../automation-intro.md#shared-resources) in Azure Automation.
 
 ## Modules
 
@@ -30,7 +25,7 @@ Because importing PowerShell modules is a complex, multistep process, a module m
 
 #### Resolution
 
-To resolve this issue, you must remove the module that is stuck by using the [Remove-AzAutomationModule](https://docs.microsoft.com/powershell/module/Az.Automation/Remove-AzAutomationModule?view=azps-3.7.0) cmdlet. You can then retry importing the module.
+To resolve this issue, you must remove the module that is stuck by using the [Remove-AzAutomationModule](/powershell/module/Az.Automation/Remove-AzAutomationModule) cmdlet. You can then retry importing the module.
 
 ```azurepowershell-interactive
 Remove-AzAutomationModule -Name ModuleName -ResourceGroupName ExampleResourceGroup -AutomationAccountName ExampleAutomationAccount -Force
@@ -67,7 +62,7 @@ Some common reasons that a module might not successfully import to Azure Automat
 * The structure doesn't match the structure that Automation needs.
 * The module depends on another module that hasn't been deployed to your Automation account.
 * The module is missing its dependencies in the folder.
-* The [New-AzAutomationModule](https://docs.microsoft.com/powershell/module/Az.Automation/New-AzAutomationModule?view=azps-3.7.0) cmdlet is being used to upload the module, and you haven't provided the full storage path or haven't loaded the module by using a publicly accessible URL.
+* The [New-AzAutomationModule](/powershell/module/Az.Automation/New-AzAutomationModule) cmdlet is being used to upload the module, and you haven't provided the full storage path or haven't loaded the module by using a publicly accessible URL.
 
 #### Resolution
 
@@ -131,7 +126,7 @@ You don't have the permissions that you need to create or update the Run As acco
 
 #### Resolution
 
-To create or update a Run As account, you must have appropriate [permissions](../manage-runas-account.md#permissions) to the various resources used by the Run As account. 
+To create or update a Run As account, you must have appropriate [permissions](../automation-security-overview.md#permissions) to the various resources used by the Run As account.
 
 If the problem is because of a lock, verify that the lock can be removed. Then go to the resource that is locked in Azure portal, right-click the lock, and select **Delete**.
 
@@ -147,7 +142,7 @@ Unable to find an entry point named 'GetPerAdapterInfo' in DLL 'iplpapi.dll'
 
 #### Cause
 
-This error is most likely caused by an incorrectly configured [Run As account](../manage-runas-account.md).
+This error is most likely caused by an incorrectly configured [Run As account](../automation-security-overview.md).
 
 #### Resolution
 
@@ -166,4 +161,3 @@ If this article doesn't resolve your issue, try one of the following channels fo
 * Get answers from Azure experts through [Azure Forums](https://azure.microsoft.com/support/forums/).
 * Connect with [@AzureSupport](https://twitter.com/azuresupport). This is the official Microsoft Azure account for connecting the Azure community to the right resources: answers, support, and experts.
 * File an Azure support incident. Go to the [Azure support site](https://azure.microsoft.com/support/options/), and select **Get Support**.
-
